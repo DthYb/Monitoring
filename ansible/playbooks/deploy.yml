@@ -1,0 +1,29 @@
+---
+- name: Déployer TaskFlow
+  hosts: web
+  become: true
+  pre_tasks:
+    - name: Vérifier que app_version est fourni
+      ansible.builtin.assert:
+        that: app_version is defined and (app_version | string | length > 0)
+        fail_msg: "Passez -e app_version=<numéro de run>"
+    - name: Vérifier que le build est présent localement
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/../../dist/index.html"
+      delegate_to: localhost
+      become: false
+      register: dist_stat
+      failed_when: not dist_stat.stat.exists
+  roles:
+    - taskflow
+  post_tasks:
+    - name: Vérifier la santé de l'API depuis la VM
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ api_port }}/health"
+        return_content: true
+      register: health
+      retries: 5
+      delay: 2
+      until: health.status == 200
+    - ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} ({{ app_env }}) → {{ health.json }}"

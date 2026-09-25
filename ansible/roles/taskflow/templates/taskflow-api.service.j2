@@ -1,0 +1,15 @@
+[Unit]
+Description=TaskFlow API ({{ app_env }})
+After=network.target
+
+[Service]
+User={{ app_user }}
+Group={{ app_user }}
+WorkingDirectory={{ app_root }}/current/api
+EnvironmentFile={{ app_root }}/current/api/.env
+ExecStart=/usr/bin/node src/server.js
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

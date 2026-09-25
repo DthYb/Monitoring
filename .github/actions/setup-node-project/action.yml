@@ -1,0 +1,32 @@
+# Action composite : prépare un projet Node (Node + cache npm + npm ci)
+# Utilisation : uses: ./.github/actions/setup-node-project
+#               with: { working-directory: api }
+name: Setup Node project
+description: Installe Node.js, restaure le cache npm et exécute npm ci dans le répertoire donné
+
+inputs:
+  working-directory:
+    description: Répertoire contenant package.json
+    required: false
+    default: '.'
+  node-version:
+    description: Version de Node.js
+    required: false
+    default: '20'
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js ${{ inputs.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: npm
+        # Le cache est indexé sur le lockfile du bon répertoire
+        cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+    - name: Installation des dépendances (npm ci)
+      # shell est OBLIGATOIRE pour un step run dans une action composite
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npm ci

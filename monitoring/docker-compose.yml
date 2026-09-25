@@ -1,0 +1,154 @@
+# =============================================================================
+# Stack de monitoring TaskFlow (poste étudiant)
+# =============================================================================
+#   prometheus        :9090  collecte + règles d'alerte
+#   grafana           :3001  dashboards (admin / admin)
+#   alertmanager      :9093  routage + notification des alertes   ← TODO J4
+#   node-exporter     :9100  métriques du poste (Docker host)
+#   cadvisor          :8081  métriques des conteneurs             ← TODO J4
+#   blackbox-exporter :9115  sondes HTTP (uptime des VMs)         ← TODO J4
+#   mailhog           :8025  boîte mail de test (SMTP :1025)      ← TODO J4
+#
+#   docker compose up -d
+#   docker compose exec prometheus promtool check rules /etc/prometheus/rules/taskflow.yml
+#   curl -X POST localhost:9090/-/reload      # recharge la config sans redémarrer
+# TODO J4 : décommenter alertmanager, cadvisor, blackbox-exporter, mailhog (+ volume).
+# =============================================================================
+name: taskflow-monitoring
+
+services:
+  prometheus:
+    image: docker.io/prom/prometheus:v2.53.0
+    container_name: prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle          # autorise POST /-/reload
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - ./prometheus/tests:/etc/prometheus/tests:ro
+      - prometheus-data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # pour scraper des services du poste
+    networks: [monitoring]
+    restart: unless-stopped
+
+  grafana:
+    image: docker.io/grafana/grafana:11.1.0
+    container_name: grafana
+    ports:
+      - "3001:3000"                     # 3000 est pris par l'API TaskFlow en local
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/provisioning/dashboards/json:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    networks: [monitoring]
+    restart: unless-stopped
+
+  alertmanager:
+    image: docker.io/prom/alertmanager:v0.27.0
+    container_name: alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    networks: [monitoring]
+    restart: unless-stopped
+
+  node-exporter:
+    image: docker.io/prom/node-exporter:v1.8.2
+    container_name: node-exporter
+    command:
+      - --path.rootfs=/host
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    ports:
+      - "9100:9100"
+    networks: [monitoring]
+    restart: unless-stopped
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cadvisor
+    privileged: true
+    ports:
+      - "8081:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks: [monitoring]
+    restart: unless-stopped
+
+  blackbox-exporter:
+    image: docker.io/prom/blackbox-exporter:v0.25.0
+    container_name: blackbox-exporter
+    command:
+      - --config.file=/etc/blackbox_exporter/config.yml
+    ports:
+      - "9115:9115"
+    volumes:
+      - ./blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    networks: [monitoring]
+    restart: unless-stopped
+
+  mailhog:
+    image: docker.io/mailhog/mailhog:v1.0.1
+    container_name: mailhog
+    ports:
+      - "8025:8025" # UI web
+      - "1025:1025" # SMTP
+    networks: [monitoring]
+    restart: unless-stopped
+
+  # ── Bonus J4 : logs avec Loki + Promtail ────────────────────────────────────
+  # Décommentez ces deux services (et la datasource Loki dans
+  # grafana/provisioning/datasources/prometheus.yml) pour le bonus.
+  # loki:
+  #   image: grafana/loki:3.1.0
+  #   container_name: loki
+  #   command: -config.file=/etc/loki/loki-config.yml
+  #   ports:
+  #     - "3100:3100"
+  #   volumes:
+  #     - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+  #     - loki-data:/loki
+  #   networks: [monitoring]
+  #   restart: unless-stopped
+  #
+  # promtail:
+  #   image: grafana/promtail:3.1.0
+  #   container_name: promtail
+  #   command: -config.file=/etc/promtail/promtail-config.yml
+  #   volumes:
+  #     - ./loki/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+  #     - /var/lib/docker/containers:/var/lib/docker/containers:ro
+  #     - /var/run/docker.sock:/var/run/docker.sock:ro
+  #   networks: [monitoring]
+  #   restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  alertmanager-data:
+  # loki-data:
+
+networks:
+  monitoring:
+    name: monitoring

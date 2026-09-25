@@ -1,0 +1,10 @@
+---
+app_name: taskflow
+app_root: /opt/taskflow
+app_user: taskflow
+app_env: local # surchargé par group_vars/staging.yml et prod.yml
+app_server_name: taskflow.local
+app_http_port: 80
+api_port: 3000
+node_major: 20
+keep_releases: 5

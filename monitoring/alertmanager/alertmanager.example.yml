@@ -1,0 +1,42 @@
+# Copiez ce fichier en alertmanager.yml (gitignoré) et remplacez le webhook.
+# alertmanager.yml n'est JAMAIS committé : voir .gitignore.
+global:
+  smtp_smarthost: mailhog:1025
+  smtp_from: alertmanager@taskflow.local
+  smtp_require_tls: false
+
+route:
+  receiver: mail # receveur par défaut
+  group_by: ['alertname', 'env'] # 1 notification par (alerte, environnement)
+  group_wait: 30s # attend 30 s pour grouper les alertes qui arrivent ensemble
+  group_interval: 5m # nouvelles alertes dans un groupe existant : toutes les 5 min
+  repeat_interval: 4h # rappel d'une alerte toujours active : toutes les 4 h
+  routes:
+    - matchers: ['severity="critical"']
+      receiver: discord
+      continue: true # ET on continue vers le receveur par défaut (mail)
+    - matchers: ['alertname="Watchdog"']
+      receiver: blackhole # le Watchdog ne notifie personne ici (il servirait à un service externe)
+
+receivers:
+  - name: mail
+    email_configs:
+      - to: ops@taskflow.local
+        send_resolved: true
+  - name: discord
+    discord_configs:
+      - webhook_url: https://discord.com/api/webhooks/CHANGE_ME
+        send_resolved: true
+  # Alternative Slack :
+  # - name: slack
+  #   slack_configs:
+  #     - api_url: https://hooks.slack.com/services/CHANGE_ME
+  #       channel: '#alertes'
+  #       send_resolved: true
+  - name: blackhole
+
+inhibit_rules:
+  # Si une alerte critical est active, on tait les warning de la même cible
+  - source_matchers: ['severity="critical"']
+    target_matchers: ['severity="warning"']
+    equal: ['env', 'instance']

@@ -1,0 +1,14 @@
+---
+- name: Déployer les exporters de monitoring
+  hosts: web
+  become: true
+  roles:
+    - node_exporter
+  post_tasks:
+    - name: Vérifier /metrics de node_exporter
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ node_exporter_port }}/metrics"
+      register: ne
+      retries: 3
+      delay: 2
+      until: ne.status == 200

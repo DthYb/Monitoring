@@ -1,0 +1,71 @@
+groups:
+  - name: taskflow.rules
+    rules:
+      # Recording rules : pré-calculent les expressions utilisées partout
+      - record: job:http_requests:rate5m
+        expr: sum(rate(http_requests_total[5m])) by (env)
+      - record: job:http_errors:ratio5m
+        expr: >
+          sum(rate(http_requests_total{status_code=~"5.."}[5m])) by (env)
+          / sum(rate(http_requests_total[5m])) by (env)
+
+  - name: taskflow.alerts
+    rules:
+      # Dead man's switch : toujours en firing ; si elle disparaît, c'est la chaîne d'alerte qui est morte
+      - alert: Watchdog
+        expr: vector(1)
+        labels: { severity: none }
+        annotations:
+          summary: "Alerte permanente de bon fonctionnement du pipeline d'alerting"
+
+      - alert: InstanceDown
+        expr: up == 0
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: "Target {{ $labels.job }} injoignable ({{ $labels.instance }})"
+          description: "Prometheus ne parvient plus à scraper {{ $labels.instance }} depuis 1 min."
+          runbook_url: https://github.com/DthYb/TP-Formation-Automatisation-CI---Monitoring/blob/main/taskflow-ops/docs/runbooks/InstanceDown.md
+
+      - alert: TaskFlowApiDown
+        expr: probe_success{job="blackbox"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "TaskFlow {{ $labels.env }} ne répond plus"
+          description: "La sonde HTTP {{ $labels.instance }} échoue depuis 1 min."
+          runbook_url: https://github.com/DthYb/TP-Formation-Automatisation-CI---Monitoring/blob/main/taskflow-ops/docs/runbooks/TaskFlowApiDown.md
+
+      - alert: HighErrorRate
+        expr: job:http_errors:ratio5m > 0.05
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Taux d'erreur 5xx > 5 % sur {{ $labels.env }}"
+          description: "{{ $value | humanizePercentage }} des requêtes échouent depuis 5 min."
+          runbook_url: https://github.com/DthYb/TP-Formation-Automatisation-CI---Monitoring/blob/main/taskflow-ops/docs/runbooks/HighErrorRate.md
+
+      - alert: HighLatencyP95
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, env)) > 0.3
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Latence p95 > 300 ms sur {{ $labels.env }}"
+          description: "p95 = {{ $value | humanizeDuration }}"
+          runbook_url: https://github.com/DthYb/TP-Formation-Automatisation-CI---Monitoring/blob/main/taskflow-ops/docs/runbooks/HighLatencyP95.md
+
+      - alert: HostHighCpu
+        expr: 100 - avg by (instance, env) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100 > 80
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "CPU > 80 % depuis 10 min sur {{ $labels.instance }}"
+          runbook_url: https://github.com/DthYb/TP-Formation-Automatisation-CI---Monitoring/blob/main/taskflow-ops/docs/runbooks/HostHighCpu.md
+
+      - alert: DiskWillFillIn4h
+        expr: predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"}[1h], 4 * 3600) < 0
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "Disque {{ $labels.mountpoint }} plein dans < 4 h ({{ $labels.instance }})"
+          runbook_url: https://github.com/DthYb/TP-Formation-Automatisation-CI---Monitoring/blob/main/taskflow-ops/docs/runbooks/DiskWillFillIn4h.md

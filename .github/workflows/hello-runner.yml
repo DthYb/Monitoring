@@ -1,0 +1,33 @@
+# Premier workflow exécuté sur NOTRE runner (et non sur ubuntu-latest chez GitHub)
+name: Hello runner
+
+on:
+  workflow_dispatch:
+
+jobs:
+  hello:
+    # Les labels sélectionnent le runner : self-hosted ET lab
+    runs-on: [self-hosted, lab]
+    steps:
+      - name: Qui suis-je ?
+        run: |
+          echo "Runner : $RUNNER_NAME sur $(hostname)"
+          echo "Utilisateur : $(whoami)"
+          uname -a
+
+      - name: Outils disponibles sur le runner
+        run: |
+          ansible --version | head -1
+          docker --version
+          node --version || echo "Node absent (normal : on utilisera setup-node)"
+
+  # Test de l'action composite (étape 2.2)
+  smoke-action:
+    runs-on: ubuntu-latest
+    steps:
+      # checkout d'abord : l'action locale n'existe qu'après
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node-project
+        with:
+          working-directory: api
+      - run: node --version && ls api/node_modules | head -3

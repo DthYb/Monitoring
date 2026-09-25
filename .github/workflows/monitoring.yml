@@ -1,0 +1,31 @@
+# Déploie les exporters sur TOUTES les VMs (staging + prod) depuis le runner.
+# Déclenché à la main, ou dès qu'on modifie le rôle node_exporter.
+name: Monitoring (exporters)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'ansible/roles/node_exporter/**'
+      - 'ansible/playbooks/monitoring.yml'
+      - '.github/workflows/monitoring.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  exporters:
+    name: 📡 node_exporter sur les VMs
+    runs-on: [self-hosted, lab]
+    environment: staging # pour les secrets ; la clé SSH est la même sur les 2 VMs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+      - run: ansible-galaxy collection install -r ansible/requirements.yml
+      - name: Déployer node_exporter
+        run: ansible-playbook -i ansible/inventory/hosts.ini ansible/playbooks/monitoring.yml
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"

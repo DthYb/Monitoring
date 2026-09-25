@@ -1,0 +1,10 @@
+---
+# Variables communes à tous les environnements
+app_name: taskflow
+app_root: /opt/taskflow            # releases/, current -> releases/<n>, shared/
+app_user: taskflow                 # utilisateur système qui fait tourner l'API
+app_http_port: 80
+api_port: 3000
+keep_releases: 5                   # nombre de releases conservées pour rollback
+node_major: 20                     # dépôt NodeSource
+node_exporter_version: "1.8.2"

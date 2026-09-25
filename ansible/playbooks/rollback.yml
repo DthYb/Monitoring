@@ -1,0 +1,42 @@
+---
+- name: Revenir à une release précédente
+  hosts: web
+  become: true
+  pre_tasks:
+    - name: Vérifier rollback_to
+      ansible.builtin.assert:
+        that: rollback_to is defined and (rollback_to | string | length > 0)
+        fail_msg: "Passez -e rollback_to=<numéro de run>"
+    - name: Vérifier que la release existe sur le serveur
+      ansible.builtin.stat:
+        path: "{{ app_root }}/releases/{{ rollback_to }}/api/src/server.js"
+      register: rel
+      failed_when: not rel.stat.exists
+  tasks:
+    - name: Rebasculer current
+      ansible.builtin.file:
+        src: "{{ app_root }}/releases/{{ rollback_to }}"
+        dest: "{{ app_root }}/current"
+        state: link
+      notify:
+        - Restart taskflow-api
+        - Reload nginx
+  handlers:
+    - name: Restart taskflow-api
+      ansible.builtin.systemd:
+        name: taskflow-api
+        state: restarted
+    - name: Reload nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
+  post_tasks:
+    - ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ api_port }}/health"
+        return_content: true
+      register: health
+      retries: 5
+      delay: 2
+      until: health.status == 200 and health.json.version == (rollback_to | string)
+    - ansible.builtin.debug:
+        msg: "Rollback OK → {{ health.json }}"

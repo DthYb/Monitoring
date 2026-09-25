@@ -1,0 +1,69 @@
+# =============================================================================
+# CI TaskFlow — orchestration : appelle le workflow réutilisable
+# pour le front (.) et pour l'API (api/).
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+# Requis par dorny/test-reporter (crée un "check" sur le commit)
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+# Un push sur la même branche annule le run précédent encore en cours
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  front:
+    name: Front
+    uses: ./.github/workflows/reusable-node-ci.yml
+    with:
+      working-directory: .
+      upload-artifact: true
+      artifact-name: front
+
+  api:
+    name: API
+    uses: ./.github/workflows/reusable-node-ci.yml
+    with:
+      working-directory: api
+      artifact-name: api
+
+  lint-monitoring:
+    name: 📈 Lint monitoring
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: promtool check rules
+        uses: docker://prom/prometheus:v2.53.0
+        with:
+          entrypoint: promtool
+          args: check rules monitoring/prometheus/rules/taskflow.yml
+
+      - name: promtool check config (syntaxe uniquement — les fichiers montés n'existent pas ici)
+        uses: docker://prom/prometheus:v2.53.0
+        with:
+          entrypoint: promtool
+          args: check config --syntax-only monitoring/prometheus/prometheus.yml
+
+      # alertmanager.yml (avec le vrai webhook) est gitignoré : on valide l'example versionné.
+      - name: amtool check-config
+        uses: docker://prom/alertmanager:v0.27.0
+        with:
+          entrypoint: amtool
+          args: check-config monitoring/alertmanager/alertmanager.example.yml

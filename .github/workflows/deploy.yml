@@ -1,0 +1,212 @@
+# =============================================================================
+# Deploy TaskFlow — build once, deploy many
+# push sur main   → build → staging → smoke → (approbation) → prod → smoke
+# workflow_dispatch avec rollback_to → rollback prod uniquement (étape 5)
+# =============================================================================
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md']
+  workflow_dispatch:
+    inputs:
+      rollback_to:
+        description: "Numéro de run à restaurer en prod (laisser vide pour un déploiement normal)"
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+# Jamais deux déploiements en même temps ; on n'annule pas celui en cours
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  ANSIBLE_HOST_KEY_CHECKING: "False"
+  ANSIBLE_FORCE_COLOR: "true"
+
+jobs:
+  # ───────────────────────── Build (une seule fois) ─────────────────────────
+  build:
+    name: 🔨 Build artefact
+    if: ${{ !inputs.rollback_to }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node-project
+      - name: Build du front
+        run: npm run build
+      - name: Empaqueter dist/ + api/ (artefact immuable)
+        run: tar czf taskflow-${{ github.run_number }}.tar.gz dist api --exclude=api/node_modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: taskflow-build
+          path: taskflow-${{ github.run_number }}.tar.gz
+          retention-days: 30
+
+  # ───────────────────────────── Staging ────────────────────────────────────
+  deploy-staging:
+    name: 🚀 Deploy staging
+    needs: build
+    runs-on: [self-hosted, lab]
+    environment:
+      name: staging
+      url: http://${{ vars.TARGET_IP }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Récupérer l'artefact de build
+        uses: actions/download-artifact@v4
+        with:
+          name: taskflow-build
+
+      - name: Extraire dist/ et api/
+        run: tar xzf taskflow-${{ github.run_number }}.tar.gz
+
+      - name: Charger la clé SSH du lab
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Préparer le mot de passe Vault
+        run: |
+          echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > "$RUNNER_TEMP/.vault_pass"
+          chmod 600 "$RUNNER_TEMP/.vault_pass"
+
+      - name: Installer les collections Ansible
+        run: ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: Déployer avec Ansible
+        run: |
+          ansible-playbook -i ansible/inventory/hosts.ini ansible/playbooks/deploy.yml \
+            -l staging \
+            -e app_version=${{ github.run_number }} \
+            --vault-password-file "$RUNNER_TEMP/.vault_pass"
+
+      - name: Nettoyer les fichiers sensibles (runner persistant !)
+        if: always()
+        run: rm -f "$RUNNER_TEMP/.vault_pass" taskflow-*.tar.gz
+
+  smoke-staging:
+    name: 🩺 Smoke test staging
+    needs: deploy-staging
+    runs-on: [self-hosted, lab]
+    environment: staging # nécessaire pour lire vars.TARGET_IP
+    steps:
+      - name: /health répond ok
+        run: |
+          curl -fsS --retry 5 --retry-delay 2 "http://${{ vars.TARGET_IP }}/health" | tee health.json
+          grep -q '"status":"ok"' health.json
+          grep -q "\"version\":\"${{ github.run_number }}\"" health.json
+
+  annotate-grafana-staging:
+    name: 📝 Annotation Grafana (staging)
+    needs: [smoke-staging]
+    if: always() && needs.smoke-staging.result == 'success'
+    runs-on: [self-hosted, lab]
+    steps:
+      - name: Poser l'annotation de déploiement
+        env:
+          GRAFANA_URL: ${{ vars.GRAFANA_URL }}
+          GRAFANA_TOKEN: ${{ secrets.GRAFANA_TOKEN }}
+        run: |
+          curl -fsS -X POST "$GRAFANA_URL/api/annotations" \
+            -H "Authorization: Bearer $GRAFANA_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"tags":["deploy","staging"],"text":"Deploy #${{ github.run_number }} — ${{ github.sha }} par ${{ github.actor }}"}'
+
+  # ────────────────────────────── Production ────────────────────────────────
+  deploy-prod:
+    name: 🚀 Deploy production
+    needs: smoke-staging
+    runs-on: [self-hosted, lab]
+    environment:
+      name: production # required reviewers → le job attend l'approbation
+      url: http://${{ vars.TARGET_IP }}
+    outputs:
+      target_ip: ${{ vars.TARGET_IP }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: taskflow-build
+      - run: tar xzf taskflow-${{ github.run_number }}.tar.gz
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+      - run: |
+          echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > "$RUNNER_TEMP/.vault_pass"
+          chmod 600 "$RUNNER_TEMP/.vault_pass"
+      - run: ansible-galaxy collection install -r ansible/requirements.yml
+      - name: Déployer avec Ansible
+        run: |
+          ansible-playbook -i ansible/inventory/hosts.ini ansible/playbooks/deploy.yml \
+            -l prod \
+            -e app_version=${{ github.run_number }} \
+            --vault-password-file "$RUNNER_TEMP/.vault_pass"
+      - if: always()
+        run: rm -f "$RUNNER_TEMP/.vault_pass" taskflow-*.tar.gz
+
+  smoke-prod:
+    name: 🩺 Smoke test production
+    needs: deploy-prod
+    runs-on: [self-hosted, lab]
+    steps:
+      - name: /health répond ok
+        run: |
+          curl -fsS --retry 5 --retry-delay 2 "http://${{ needs.deploy-prod.outputs.target_ip }}/health" | tee health.json
+          grep -q '"status":"ok"' health.json
+
+  annotate-grafana-prod:
+    name: 📝 Annotation Grafana (production)
+    needs: [smoke-prod]
+    if: always() && needs.smoke-prod.result == 'success'
+    runs-on: [self-hosted, lab]
+    steps:
+      - name: Poser l'annotation de déploiement
+        env:
+          GRAFANA_URL: ${{ vars.GRAFANA_URL }}
+          GRAFANA_TOKEN: ${{ secrets.GRAFANA_TOKEN }}
+        run: |
+          curl -fsS -X POST "$GRAFANA_URL/api/annotations" \
+            -H "Authorization: Bearer $GRAFANA_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"tags":["deploy","production"],"text":"Deploy #${{ github.run_number }} — ${{ github.sha }} par ${{ github.actor }}"}'
+
+  # ─────────────────────────────── Rollback ─────────────────────────────────
+  rollback:
+    name: ⏪ Rollback production
+    if: github.event_name == 'workflow_dispatch' && inputs.rollback_to != ''
+    runs-on: [self-hosted, lab]
+    environment: production # un rollback aussi se fait sous approbation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+      - run: |
+          echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > "$RUNNER_TEMP/.vault_pass"
+          chmod 600 "$RUNNER_TEMP/.vault_pass"
+      - name: Rebasculer sur la release ${{ inputs.rollback_to }}
+        run: |
+          ansible-playbook -i ansible/inventory/hosts.ini ansible/playbooks/rollback.yml \
+            -l prod -e rollback_to=${{ inputs.rollback_to }} \
+            --vault-password-file "$RUNNER_TEMP/.vault_pass"
+      - if: always()
+        run: rm -f "$RUNNER_TEMP/.vault_pass"
+
+  # ───────────────────────────── Notification (bonus) ───────────────────────
+  notify:
+    name: 📣 Notification
+    needs: [smoke-prod]
+    if: always() && needs.smoke-prod.result != 'skipped'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          STATUS="${{ needs.smoke-prod.result }}"
+          curl -fsS -H "Content-Type: application/json" \
+            -d "{\"content\":\"TaskFlow prod — run #${{ github.run_number }} : $STATUS\\n${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            "${{ secrets.DISCORD_WEBHOOK }}"

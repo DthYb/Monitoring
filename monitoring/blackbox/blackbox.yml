@@ -1,0 +1,26 @@
+# Modules de sonde blackbox_exporter
+modules:
+  # Sonde HTTP : succès si la réponse est un 2xx en moins de 5 s
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      valid_status_codes: []        # [] = 2xx par défaut
+      method: GET
+      follow_redirects: true
+      preferred_ip_protocol: ip4
+
+  # Sonde HTTP qui attend un 200 ET un contenu précis
+  http_health_ok:
+    prober: http
+    timeout: 5s
+    http:
+      method: GET
+      fail_if_body_not_matches_regexp:
+        - '"status":"ok"'
+      preferred_ip_protocol: ip4
+
+  # Sonde ICMP (ping) — nécessite NET_RAW, souvent bloquée dans Docker
+  icmp:
+    prober: icmp
+    timeout: 5s

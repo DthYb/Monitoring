@@ -1,0 +1,107 @@
+# =============================================================================
+# Workflow RÉUTILISABLE : CI d'un projet Node (lint → test → build)
+# Appelé par ci.yml pour le front (.) et pour l'API (api/).
+# =============================================================================
+name: Reusable Node CI
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: Répertoire du projet Node
+        type: string
+        required: true
+      node-version:
+        description: Version de Node.js
+        type: string
+        default: '20'
+      upload-artifact:
+        description: Publier le build (dist/) en artefact
+        type: boolean
+        default: false
+      artifact-name:
+        description: Suffixe des artefacts (dist-<nom>, coverage-<nom>)
+        type: string
+        default: project
+
+jobs:
+  lint:
+    name: 🔍 Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node-project
+        with:
+          working-directory: ${{ inputs.working-directory }}
+          node-version: ${{ inputs.node-version }}
+      - name: ESLint
+        working-directory: ${{ inputs.working-directory }}
+        run: npm run lint
+      - name: Prettier
+        working-directory: ${{ inputs.working-directory }}
+        run: npm run format:check
+
+  test:
+    name: 🧪 Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node-project
+        with:
+          working-directory: ${{ inputs.working-directory }}
+          node-version: ${{ inputs.node-version }}
+
+      - name: Tests + rapport JUnit + couverture
+        working-directory: ${{ inputs.working-directory }}
+        run: npm run test:ci
+
+      - name: Publier le rapport de tests
+        uses: dorny/test-reporter@v1
+        if: always() # même si les tests échouent : c'est justement là qu'on veut le rapport
+        with:
+          name: Tests ${{ inputs.artifact-name }}
+          path: ${{ inputs.working-directory }}/reports/junit.xml
+          reporter: java-junit
+
+      - name: Résumé de couverture
+        if: always()
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "## Couverture — ${{ inputs.artifact-name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          # lcov.info : on calcule le % de lignes couvertes (LH = lignes touchées, LF = lignes trouvées)
+          awk -F: '/^LH:/{h+=$2} /^LF:/{f+=$2} END{printf "Lignes couvertes : %d/%d (%.1f%%)\n", h, f, (f?100*h/f:0)}' coverage/lcov.info \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Archiver la couverture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ inputs.artifact-name }}
+          path: ${{ inputs.working-directory }}/coverage/
+          retention-days: 7
+
+  build:
+    name: 🔨 Build
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node-project
+        with:
+          working-directory: ${{ inputs.working-directory }}
+          node-version: ${{ inputs.node-version }}
+      - name: Build
+        working-directory: ${{ inputs.working-directory }}
+        run: npm run build
+      - name: Archiver le build
+        if: inputs.upload-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ inputs.artifact-name }}
+          path: ${{ inputs.working-directory }}/dist/
+          retention-days: 7

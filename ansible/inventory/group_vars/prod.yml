@@ -1,0 +1,5 @@
+---
+# À CHIFFRER avant tout push : ansible-vault encrypt ansible/inventory/group_vars/prod.yml
+# (mot de passe = secret GitHub ANSIBLE_VAULT_PASSWORD de l'environment production)
+app_env: prod
+app_server_name: taskflow.local

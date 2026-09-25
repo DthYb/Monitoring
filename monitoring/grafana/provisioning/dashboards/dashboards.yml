@@ -1,0 +1,15 @@
+# Provisioning des dashboards : tout JSON déposé dans /var/lib/grafana/dashboards
+# (monté depuis grafana/provisioning/dashboards/json) est chargé automatiquement.
+apiVersion: 1
+
+providers:
+  - name: taskflow
+    orgId: 1
+    folder: TaskFlow
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true          # modifiable dans l'UI… mais pensez à ré-exporter le JSON !
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+reports/
+*.tar.gz
+.env
+.env.local
+*.retry
+.vault_pass
+monitoring/data/
+# Contient le webhook Discord/Slack : on versionne alertmanager.example.yml
+**/monitoring/alertmanager/alertmanager.yml
