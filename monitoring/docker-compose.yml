@@ -71,11 +71,10 @@ services:
   node-exporter:
     image: docker.io/prom/node-exporter:v1.8.2
     container_name: node-exporter
-    command:
-      - --path.rootfs=/host
-    pid: host
-    volumes:
-      - /:/host:ro,rslave
+    # Windows/Docker Desktop : pas de vrai systeme de fichiers hote /,
+    # ni de partage de namespace PID -> on tourne sans --path.rootfs
+    # (metriques du conteneur, pas de l'hote Windows reel, suffisant pour
+    # que le target "node-local" soit UP en TP).
     ports:
       - "9100:9100"
     networks: [monitoring]

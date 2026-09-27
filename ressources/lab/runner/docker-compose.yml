@@ -1,0 +1,47 @@
+# =============================================================================
+# Runner self-hosted GitHub Actions — lab TaskFlow
+# =============================================================================
+#   cp .env.example .env   → renseigner REPO_URL et RUNNER_TOKEN
+#   docker compose up -d --build
+#   docker compose logs -f runner     → "Listening for Jobs"
+#   Settings → Actions → Runners : le runner apparaît "Idle" avec ses labels
+#
+# Le runner s'enregistre au démarrage et se désenregistre à l'arrêt propre
+# (docker compose down). Le token d'enregistrement expire au bout d'1 h :
+# régénérez-le si le conteneur n'arrive pas à s'enregistrer.
+# =============================================================================
+name: taskflow-runner
+
+services:
+  runner:
+    build: .
+    image: taskflow-runner:latest
+    container_name: taskflow-runner
+    env_file: .env                      # REPO_URL + RUNNER_TOKEN obligatoires (cf. .env.example)
+    environment:
+      RUNNER_SCOPE: repo                # runner attaché à UN repo (org possible)
+      RUNNER_NAME: ${RUNNER_NAME:-lab-runner}
+      LABELS: ${LABELS:-self-hosted,lab,ansible}   # ← `runs-on: [self-hosted, lab]`
+      RUNNER_WORKDIR: /tmp/runner/work  # workspace des jobs
+      DISABLE_AUTO_UPDATE: "1"          # on maîtrise la version via l'image
+      # EPHEMERAL : NE PAS définir (même à "false") — l'image teste seulement
+      # si la variable existe. Définir EPHEMERAL=1 = 1 job puis sortie.
+      ANSIBLE_HOST_KEY_CHECKING: "False"
+    volumes:
+      - ./work:/tmp/runner/work         # workspace persistant (inspectable depuis le poste)
+      - /var/run/docker.sock:/var/run/docker.sock   # steps `docker run` / `uses: docker://`
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # joindre Grafana (:3001) sur le poste
+    restart: unless-stopped
+    networks:
+      - runnernet
+    # ── Linux uniquement : si les VMs Multipass ne sont pas joignables depuis
+    # le conteneur, remplacer extra_hosts par le réseau de l'hôte :
+    # network_mode: host
+
+networks:
+  runnernet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.250.99.0/24
