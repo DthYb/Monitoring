@@ -25,7 +25,17 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
       - run: ansible-galaxy collection install -r ansible/requirements.yml
+      - name: Préparer le mot de passe Vault
+        run: |
+          echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > "$RUNNER_TEMP/.vault_pass"
+          chmod 600 "$RUNNER_TEMP/.vault_pass"
       - name: Déployer node_exporter
-        run: ansible-playbook -i ansible/inventory/hosts.ini ansible/playbooks/monitoring.yml
+        run: |
+          ansible-playbook -i ansible/inventory/hosts.ini ansible/playbooks/monitoring.yml \
+            --vault-password-file "$RUNNER_TEMP/.vault_pass"
         env:
           ANSIBLE_HOST_KEY_CHECKING: "False"
+          ANSIBLE_ROLES_PATH: ansible/roles
+      - name: Nettoyer le mot de passe Vault
+        if: always()
+        run: rm -f "$RUNNER_TEMP/.vault_pass"
