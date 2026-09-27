@@ -27,6 +27,7 @@ concurrency:
 env:
   ANSIBLE_HOST_KEY_CHECKING: "False"
   ANSIBLE_FORCE_COLOR: "true"
+  ANSIBLE_ROLES_PATH: ansible/roles
 
 jobs:
   # ───────────────────────── Build (une seule fois) ─────────────────────────
