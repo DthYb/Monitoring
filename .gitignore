@@ -10,3 +10,5 @@ reports/
 monitoring/data/
 # Contient le webhook Discord/Slack : on versionne alertmanager.example.yml
 **/monitoring/alertmanager/alertmanager.yml
+
+ressources/lab/runner/work/
