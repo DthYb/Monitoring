@@ -1,1 +1,0 @@
-ansible-galaxy collection install -r ansible/requirements.yml
